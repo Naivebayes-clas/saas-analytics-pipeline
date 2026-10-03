@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: stg_events
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        tests:
+          - not_null
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['page_view', 'feature_click', 'export', 'share', 'signup']
+      - name: event_ts
+        tests:
+          - not_null
+
+  - name: stg_users
+    columns:
+      - name: user_id
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - not_null
+      - name: plan_tier
+        tests:
+          - not_null   

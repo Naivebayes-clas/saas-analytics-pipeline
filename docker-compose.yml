@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "6543:5432"
+    volumes:
+      - postgres_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+    # remove: image: apache/airflow:2.10.4
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: F5tGnzGwPILZW6jMuyx0SAtr2dYgVC2YM-ne6tSmspo=
+      AIRFLOW__CORE__SECRET_KEY: 0e5664b45282cbe5294629e8a7a8d7c3f016bb1e2a8349180a5da1067e5675a0
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__SCHEDULER__AUTHENTICATE_USER: "False"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./dbt:/opt/airflow/dbt
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+    # remove: image: apache/airflow:2.10.4
+    command: airflow scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: your-fernet-key-here
+      AIRFLOW__CORE__SECRET_KEY: your-long-random-string
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./dbt:/opt/airflow/dbt
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-init:
+    build:
+      context: ./airflow
+    # remove: image: apache/airflow:2.10.4
+    command: >
+      bash -c "airflow db migrate &&
+               airflow users create --username admin --password admin
+               --firstname Admin --lastname User --role Admin --email admin@example.com"
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: your-fernet-key-here
+      AIRFLOW__CORE__SECRET_KEY: your-long-random-string
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_db:
+  airflow_logs:   

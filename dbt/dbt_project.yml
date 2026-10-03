@@ -1,0 +1,13 @@
+name: saas_analytics
+version: '1.0'
+config-version: 2
+profile: saas_analytics          # ← add this line
+
+
+
+models:
+  saas_analytics:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table   

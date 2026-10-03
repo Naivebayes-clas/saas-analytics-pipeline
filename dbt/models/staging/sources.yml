@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: ANALYTICS
+    schema: BRONZE
+    tables:
+      - name: bronze_events
+        description: "Raw JSON events + users from S3 via Snowpipe"   
