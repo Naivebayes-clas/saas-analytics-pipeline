@@ -48,9 +48,6 @@ CI/CD: GitHub Actions (SQLFluff → dbt compile → dbt test)
 | CI/CD | GitHub Actions + SQLFluff |
 ```
 
-
-
-
 ## Project Structure
 
 saas-analytics-pipeline/  
@@ -240,3 +237,71 @@ Add GitHub Secrets: `SF_ACCOUNT`, `SF_USER`, `SF_PASSWORD`, `SF_ROLE`, `SF_WAREH
 | **Bronze** | Table (Snowpipe)   | Raw, immutable, untyped VARIANT         |
 | **Silver** | View (dbt staging) | Typed, filtered, business rules applied |
 | **Gold**   | Table (dbt marts)  | Star schema, dashboard-ready            |
+
+## Bugs Fixed
+
+A log of real issues encountered and resolved during build. Each one is a lesson in the tooling.
+
+### AWS / S3 / SNS
+
+| #   | Bug                                                                     | Root Cause                                                    | Fix                                                                        |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 1   | `PutBucketNotificationConfiguration` → "Unable to validate destination" | SNS topic had no resource-based policy allowing S3 to publish | Added policy with `aws:SourceAccount` (not `aws:SourceOwner`) on the topic |
+| 2   | Snowpipe not auto-ingesting files                                       | S3 event notification was never configured                    | Created notification: `s3:ObjectCreated:*` → prefix `bronze/` → SNS topic  |
+
+### Snowflake
+
+| #   | Bug                                                         | Root Cause                                                                                        | Fix                                                                                                          |
+| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 3   | `CREATE TABLE` → "Unsupported data type METADATA$FILE_NAME" | `METADATA$FILE_NAME` is a table function (used in `COPY INTO`), not a column type                 | Used plain `VARCHAR` / `TIMESTAMP_NTZ` columns; moved metadata extraction to the pipe's `COPY INTO` subquery |
+| 4   | `USE DATABASE ANALYTICS` silently failed                    | `TRANSFORMER` role had no `USAGE` on the database                                                 | `GRANT USAGE ON DATABASE ANALYTICS TO ROLE TRANSFORMER`                                                      |
+| 5   | `USE ROLE TRANSFORMER` → "not assigned to executing user"   | Role was created but never granted to the user                                                    | `GRANT ROLE TRANSFORMER TO USER BARNAP`                                                                      |
+| 6   | `GRANT INSERT ON SCHEMA ...` → syntax error                 | `INSERT`/`SELECT` are table-level, not schema-level                                               | Changed to `GRANT INSERT ON ALL TABLES IN SCHEMA ...` + `FUTURE TABLES`                                      |
+| 7   | `CREATE STAGE` → "Insufficient privileges"                  | Missing `CREATE STAGE` on schema                                                                  | `GRANT CREATE STAGE ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                          |
+| 8   | dbt `CREATE VIEW` → "Insufficient privileges"               | Missing `CREATE VIEW` on schema                                                                   | `GRANT CREATE VIEW ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                           |
+| 9   | `404 Not Found` on login-request                            | Wrong account identifier (tried `IS70418`, `MFEHTLV-IS70418`)                                     | Correct identifier is `db89749.eu-west-2.aws` (from browser URL, not the app URL)                            |
+| 10  | SSL cert mismatch                                           | Account field had full hostname → connector appended `.snowflakecomputing.com` again, doubling it | Use short form: `db89749.eu-west-2.aws` (connector adds the domain)                                          |
+| 11  | `connections.toml` → "writable by group or others"          | File permission was `664`                                                                         | `chmod 600 ~/.snowflake/connections.toml`                                                                    |
+
+### dbt
+
+| #   | Bug                                                           | Root Cause                                                                                                                                                                                           | Fix                                                                                                          |
+| --- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 12  | "no profile was specified"                                    | Missing `profile:` line in `dbt_project.yml`                                                                                                                                                         | Added `profile: saas_analytics`                                                                              |
+| 13  | "No module named dbt.adapters.snowflake"                      | Adapter not installed                                                                                                                                                                                | `pip install dbt-snowflake`                                                                                  |
+| 14  | "depends on a node named 'bronze_events' which was not found" | `{{ ref() }}` only works for dbt-created models                                                                                                                                                      | Created `sources.yml` and used `{{ source('bronze', 'bronze_events') }}`                                     |
+| 15  | `TypeError: can not serialize 'SnowflakeRelation' object`     | (a) Nested `saas_analytics/` project confused the parser; (b) version mismatch (core 1.11 + adapter 1.12); (c) inline `tests=[...]` in `{{ config() }}` stored a `SnowflakeRelation` in the manifest | Removed nested project; pinned `dbt-core==1.12.5` + `dbt-snowflake==1.12.1`; moved all tests to `schema.yml` |
+| 16  | `PermissionError` on `target/partial_parse.msgpack`           | Container user (airflow) and host user (barnap86) had different UIDs on the same mounted dir                                                                                                         | `chmod -R 777 dbt/` + `--no-partial-parse` flag                                                              |
+| 17  | `TRY_CAST(VARIANT AS TIMESTAMP_NTZ)` → compilation error      | Snowflake can't `TRY_CAST` directly from VARIANT to TIMESTAMP                                                                                                                                        | Cast through VARCHAR: `TRY_CAST(data:event_ts::VARCHAR AS TIMESTAMP_NTZ)`                                    |
+
+### Data / Timestamps
+
+| #   | Bug                                             | Root Cause                                                                                                          | Fix                                                                       |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 18  | `year 58712 is out of range` (Python connector) | `event_ts` / `signup_ts` stored as epoch **milliseconds** (13-digit int); `::TIMESTAMP_NTZ` misinterprets the scale | `TO_TIMESTAMP_NTZ(data:event_ts::NUMBER, 3)` — the `3` means milliseconds |
+| 19  | `Unknown function TO_TIMESTAMP_MS`              | That function doesn't exist in Snowflake                                                                            | Use `TO_TIMESTAMP_NTZ(value, 3)` instead                                  |
+
+### Airflow / Docker
+
+| #   | Bug                                                        | Root Cause                                                               | Fix                                                                                         |
+| --- | ---------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| 20  | `dbt: command not found` in container                      | Base `apache/airflow` image doesn't include dbt                          | Custom `Dockerfile`: `FROM apache/airflow:2.10.4` + `pip install dbt-snowflake`             |
+| 21  | `pip install` as root → "Please use 'airflow' user"        | Airflow image blocks pip for root                                        | `USER airflow` before `RUN pip install` in Dockerfile                                       |
+| 22  | `--profiles-dir: Path '/home/airflow/.dbt' does not exist` | `profiles.yml` was on host, not in container                             | Copied into `dbt/` folder + `--profiles-dir /opt/airflow/dbt` flag                          |
+| 23  | `admin is not a valid role`                                | Role name is case-sensitive in Airflow 2.10+                             | Use `Admin` (capital A)                                                                     |
+| 24  | Python `SyntaxError: '(' was never closed` in DAG          | Nested escaped quotes (`\"`) inside triple-quoted `bash_command` strings | Extracted inline Python into separate `.py` files (`refresh_pipe.py`, `row_count_check.py`) |
+
+### Streamlit
+
+| #   | Bug                                               | Root Cause                                                | Fix                                                            |
+| --- | ------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| 25  | `KeyError: 'session_id'`                          | Snowflake connector returns column names in **UPPERCASE** | `df.columns = df.columns.str.lower()` after building DataFrame |
+| 26  | `module 'streamlit' has no attribute 'pie_chart'` | `st.pie_chart` requires Streamlit ≥ 1.29                  | Replaced with `matplotlib` pie chart                           |
+
+### GitHub / CI-CD
+
+| #   | Bug                                                                               | Root Cause                                                        | Fix                                                                                                                               |
+| --- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 27  | Push blocked: "Push cannot contain secrets" (AWS keys)                            | `sns_aws.txt` with Access Key ID + Secret was committed           | `git rm --cached` + `git filter-branch` to purge from history + force push + rotate keys                                          |
+| 28  | Push blocked: "refusing to allow PAT to create workflow without `workflow` scope" | Personal Access Token lacked `workflow` scope                     | Regenerated PAT with `repo` + `workflow` scopes                                                                                   |
+| 29  | CI: "Could not find profile named 'saas_analytics'"                               | `profiles.yml` was in `.gitignore` (contained hardcoded password) | Rewrote `profiles.yml` to use `{{ env_var('SF_ACCOUNT') }}` etc.; committed the template; injected real values via GitHub Secrets |
