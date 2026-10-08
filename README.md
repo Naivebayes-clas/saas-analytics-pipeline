@@ -107,7 +107,7 @@ Create `.env` (gitignored):
 
 ```
 # .env
-SNOWFLAKE_ACCOUNT=db89749.eu-west-2.aws
+SNOWFLAKE_ACCOUNT=xy12345.eu-west-2.aws
 SNOWFLAKE_USER=YOUR_USER
 SNOWFLAKE_PASSWORD=YOUR_PASSWORD
 SNOWFLAKE_ROLE=TRANSFORMER
@@ -176,7 +176,6 @@ Snowpipe auto-ingests within ~30 seconds. Verify:
 
 ```
 SELECT COUNT(*) FROM ANALYTICS.BRONZE.bronze_events;
--- Expected: ~10,500 rows
 ```
 
 ### 5. dbt (Silver + Gold)
@@ -251,17 +250,15 @@ A log of real issues encountered and resolved during build. Each one is a lesson
 
 ### Snowflake
 
-| #   | Bug                                                         | Root Cause                                                                                        | Fix                                                                                                          |
-| --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 3   | `CREATE TABLE` → "Unsupported data type METADATA$FILE_NAME" | `METADATA$FILE_NAME` is a table function (used in `COPY INTO`), not a column type                 | Used plain `VARCHAR` / `TIMESTAMP_NTZ` columns; moved metadata extraction to the pipe's `COPY INTO` subquery |
-| 4   | `USE DATABASE ANALYTICS` silently failed                    | `TRANSFORMER` role had no `USAGE` on the database                                                 | `GRANT USAGE ON DATABASE ANALYTICS TO ROLE TRANSFORMER`                                                      |
-| 5   | `USE ROLE TRANSFORMER` → "not assigned to executing user"   | Role was created but never granted to the user                                                    | `GRANT ROLE TRANSFORMER TO USER BARNAP`                                                                      |
-| 6   | `GRANT INSERT ON SCHEMA ...` → syntax error                 | `INSERT`/`SELECT` are table-level, not schema-level                                               | Changed to `GRANT INSERT ON ALL TABLES IN SCHEMA ...` + `FUTURE TABLES`                                      |
-| 7   | `CREATE STAGE` → "Insufficient privileges"                  | Missing `CREATE STAGE` on schema                                                                  | `GRANT CREATE STAGE ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                          |
-| 8   | dbt `CREATE VIEW` → "Insufficient privileges"               | Missing `CREATE VIEW` on schema                                                                   | `GRANT CREATE VIEW ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                           |
-| 9   | `404 Not Found` on login-request                            | Wrong account identifier (tried `IS70418`, `MFEHTLV-IS70418`)                                     | Correct identifier is `db89749.eu-west-2.aws` (from browser URL, not the app URL)                            |
-| 10  | SSL cert mismatch                                           | Account field had full hostname → connector appended `.snowflakecomputing.com` again, doubling it | Use short form: `db89749.eu-west-2.aws` (connector adds the domain)                                          |
-| 11  | `connections.toml` → "writable by group or others"          | File permission was `664`                                                                         | `chmod 600 ~/.snowflake/connections.toml`                                                                    |
+| #   | Bug                                                         | Root Cause                                                                        | Fix                                                                                                          |
+| --- | ----------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 3   | `CREATE TABLE` → "Unsupported data type METADATA$FILE_NAME" | `METADATA$FILE_NAME` is a table function (used in `COPY INTO`), not a column type | Used plain `VARCHAR` / `TIMESTAMP_NTZ` columns; moved metadata extraction to the pipe's `COPY INTO` subquery |
+| 4   | `USE DATABASE ANALYTICS` silently failed                    | `TRANSFORMER` role had no `USAGE` on the database                                 | `GRANT USAGE ON DATABASE ANALYTICS TO ROLE TRANSFORMER`                                                      |
+| 5   | `USE ROLE TRANSFORMER` → "not assigned to executing user"   | Role was created but never granted to the user                                    | `GRANT ROLE TRANSFORMER TO USER`                                                                             |
+| 6   | `GRANT INSERT ON SCHEMA ...` → syntax error                 | `INSERT`/`SELECT` are table-level, not schema-level                               | Changed to `GRANT INSERT ON ALL TABLES IN SCHEMA ...` + `FUTURE TABLES`                                      |
+| 7   | `CREATE STAGE` → "Insufficient privileges"                  | Missing `CREATE STAGE` on schema                                                  | `GRANT CREATE STAGE ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                          |
+| 8   | dbt `CREATE VIEW` → "Insufficient privileges"               | Missing `CREATE VIEW` on schema                                                   | `GRANT CREATE VIEW ON SCHEMA ANALYTICS.BRONZE TO ROLE TRANSFORMER`                                           |
+| 11  | `connections.toml` → "writable by group or others"          | File permission was `664`                                                         | `chmod 600 ~/.snowflake/connections.toml`                                                                    |
 
 ### dbt
 
@@ -271,7 +268,7 @@ A log of real issues encountered and resolved during build. Each one is a lesson
 | 13  | "No module named dbt.adapters.snowflake"                      | Adapter not installed                                                                                                                                                                                | `pip install dbt-snowflake`                                                                                  |
 | 14  | "depends on a node named 'bronze_events' which was not found" | `{{ ref() }}` only works for dbt-created models                                                                                                                                                      | Created `sources.yml` and used `{{ source('bronze', 'bronze_events') }}`                                     |
 | 15  | `TypeError: can not serialize 'SnowflakeRelation' object`     | (a) Nested `saas_analytics/` project confused the parser; (b) version mismatch (core 1.11 + adapter 1.12); (c) inline `tests=[...]` in `{{ config() }}` stored a `SnowflakeRelation` in the manifest | Removed nested project; pinned `dbt-core==1.12.5` + `dbt-snowflake==1.12.1`; moved all tests to `schema.yml` |
-| 16  | `PermissionError` on `target/partial_parse.msgpack`           | Container user (airflow) and host user (barnap86) had different UIDs on the same mounted dir                                                                                                         | `chmod -R 777 dbt/` + `--no-partial-parse` flag                                                              |
+| 16  | `PermissionError` on `target/partial_parse.msgpack`           | Container user (airflow) and host user had different UIDs on the same mounted dir                                                                                                                    | `chmod -R 777 dbt/` + `--no-partial-parse` flag                                                              |
 | 17  | `TRY_CAST(VARIANT AS TIMESTAMP_NTZ)` → compilation error      | Snowflake can't `TRY_CAST` directly from VARIANT to TIMESTAMP                                                                                                                                        | Cast through VARCHAR: `TRY_CAST(data:event_ts::VARCHAR AS TIMESTAMP_NTZ)`                                    |
 
 ### Data / Timestamps
